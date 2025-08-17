@@ -460,4 +460,4 @@ else:
 # Refresh button
 if st.button("🔄 Refresh Data"):
     st.cache_data.clear()
-    st.experimental_rerun()
+    st.rerun()

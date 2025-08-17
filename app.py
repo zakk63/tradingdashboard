@@ -351,7 +351,7 @@ def display_ticker_analysis(ticker_name, ticker_symbol):
             with st.spinner(f"Updating {ticker_name} data..."):
                 if save_snapshot(ticker_name, ticker_symbol):
                     st.success(f"{ticker_name} updated!")
-                    st.experimental_rerun()
+                    st.rerun()
                 else:
                     st.error(f"Failed to update {ticker_name}")
     
@@ -416,7 +416,7 @@ def main():
                 save_snapshot(ticker_name, ticker_symbol)
                 progress_bar.progress((i + 1) / len(TICKERS))
             st.sidebar.success("✅ All data initialized!")
-            st.experimental_rerun()
+            st.rerun()
     else:
         # Weekly update option
         st.sidebar.info("💡 Weekly Update")
@@ -427,7 +427,7 @@ def main():
                 save_snapshot(ticker_name, ticker_symbol)
                 progress_bar.progress((i + 1) / len(TICKERS))
             st.sidebar.success("✅ All snapshots updated!")
-            st.experimental_rerun()
+            st.rerun()
     
     # Display ticker selection
     selected_ticker = st.sidebar.selectbox(

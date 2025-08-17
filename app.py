@@ -1,463 +1,449 @@
+#!/usr/bin/env python3
+"""
+All-in-One Weekly Trading Dashboard
+Author: AI Assistant
+Description: Streamlit dashboard for MES, MNQ, and MGC futures analysis
+"""
+
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import plotly.express as px
-import numpy as np
+import os
 from datetime import datetime, timedelta
-import ta
-from ta.utils import dropna
 import warnings
 warnings.filterwarnings('ignore')
 
-# Page configuration
+# Configure Streamlit page
 st.set_page_config(
-    page_title="Gold Futures Dashboard - GCZ25.CMX",
-    page_icon="🥇",
+    page_title="Futures Trading Dashboard",
+    page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for better styling
-st.markdown("""
-<style>
-    .metric-card {
-        background-color: #f0f2f6;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        border-left: 5px solid #1f77b4;
-    }
-    .positive {
-        color: #00ff00;
-    }
-    .negative {
-        color: #ff0000;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# Title and description
-st.title("🥇 Gold Futures Interactive Dashboard")
-st.markdown("### GCZ25.CMX - December 2025 Gold Futures Contract")
-
-# Sidebar configuration
-st.sidebar.header("⚙️ Dashboard Settings")
-
-# Time period selection
-time_periods = {
-    "1 Month": "1mo",
-    "3 Months": "3mo", 
-    "6 Months": "6mo",
-    "1 Year": "1y",
-    "2 Years": "2y",
-    "5 Years": "5y"
+# Constants
+TICKERS = {
+    'MES': 'MES=F',
+    'MNQ': 'MNQ=F', 
+    'MGC': 'GC=F'  # Using GC=F as GCZ25.CMX may not be available
 }
+SNAPSHOTS_DIR = 'snapshots'
+LOOKBACK_DAYS = 90  # 3 months
 
-selected_period = st.sidebar.selectbox(
-    "Select Time Period:",
-    list(time_periods.keys()),
-    index=2
-)
+def ensure_snapshots_directory():
+    """Create snapshots directory if it doesn't exist"""
+    if not os.path.exists(SNAPSHOTS_DIR):
+        os.makedirs(SNAPSHOTS_DIR)
+        st.info(f"Created {SNAPSHOTS_DIR} directory")
 
-# Chart type selection
-chart_types = ["Candlestick", "Line", "Area"]
-chart_type = st.sidebar.selectbox("Chart Type:", chart_types)
-
-# Technical indicators selection
-st.sidebar.subheader("📊 Technical Indicators")
-show_sma = st.sidebar.checkbox("Simple Moving Average (SMA)", value=True)
-sma_period = st.sidebar.slider("SMA Period", 5, 200, 20)
-
-show_ema = st.sidebar.checkbox("Exponential Moving Average (EMA)")
-ema_period = st.sidebar.slider("EMA Period", 5, 200, 12)
-
-show_bollinger = st.sidebar.checkbox("Bollinger Bands")
-bb_period = st.sidebar.slider("BB Period", 5, 50, 20)
-
-show_rsi = st.sidebar.checkbox("RSI", value=True)
-rsi_period = st.sidebar.slider("RSI Period", 5, 50, 14)
-
-show_macd = st.sidebar.checkbox("MACD")
-show_volume = st.sidebar.checkbox("Volume", value=True)
-
-# Data fetching function with caching
-@st.cache_data(ttl=300)  # Cache for 5 minutes
-def fetch_data(symbol, period):
+def fetch_futures_data(ticker_symbol, days=LOOKBACK_DAYS):
+    """
+    Fetch OHLCV data from Yahoo Finance
+    
+    Args:
+        ticker_symbol (str): Yahoo Finance ticker symbol
+        days (int): Number of days to look back
+    
+    Returns:
+        pd.DataFrame: OHLCV data
+    """
     try:
-        ticker = yf.Ticker(symbol)
-        data = ticker.history(period=period)
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days)
+        
+        ticker = yf.Ticker(ticker_symbol)
+        data = ticker.history(start=start_date, end=end_date)
         
         if data.empty:
-            st.error("No data found for the specified symbol and period.")
-            return None
-            
-        # Calculate technical indicators
-        data = dropna(data)
+            st.error(f"No data found for {ticker_symbol}")
+            return pd.DataFrame()
         
-        # Moving averages
-        if len(data) >= sma_period:
-            data[f'SMA_{sma_period}'] = ta.trend.sma_indicator(data['Close'], window=sma_period)
-        
-        if len(data) >= ema_period:
-            data[f'EMA_{ema_period}'] = ta.trend.ema_indicator(data['Close'], window=ema_period)
-        
-        # Bollinger Bands
-        if len(data) >= bb_period:
-            bollinger = ta.volatility.BollingerBands(data['Close'], window=bb_period)
-            data['BB_High'] = bollinger.bollinger_hband()
-            data['BB_Low'] = bollinger.bollinger_lband()
-            data['BB_Mid'] = bollinger.bollinger_mavg()
-        
-        # RSI
-        if len(data) >= rsi_period:
-            data[f'RSI_{rsi_period}'] = ta.momentum.rsi(data['Close'], window=rsi_period)
-        
-        # MACD
-        if len(data) >= 26:
-            macd = ta.trend.MACD(data['Close'])
-            data['MACD'] = macd.macd()
-            data['MACD_Signal'] = macd.macd_signal()
-            data['MACD_Histogram'] = macd.macd_diff()
+        # Clean column names and ensure we have the right columns
+        data = data.round(4)
+        data.index.name = 'Date'
         
         return data
+    
     except Exception as e:
-        st.error(f"Error fetching data: {str(e)}")
-        return None
+        st.error(f"Error fetching data for {ticker_symbol}: {str(e)}")
+        return pd.DataFrame()
 
-# Fetch data
-symbol = "GCZ25.CMX"
-data = fetch_data(symbol, time_periods[selected_period])
+def calculate_sma(data, window=50):
+    """Calculate Simple Moving Average"""
+    if 'Close' in data.columns and len(data) >= window:
+        return data['Close'].rolling(window=window).mean()
+    return pd.Series(dtype=float)
 
-if data is not None and not data.empty:
-    # Current price and metrics
-    current_price = data['Close'].iloc[-1]
-    prev_price = data['Close'].iloc[-2] if len(data) > 1 else current_price
-    price_change = current_price - prev_price
-    price_change_pct = (price_change / prev_price) * 100 if prev_price != 0 else 0
+def determine_trend(data):
+    """
+    Determine trend based on close price vs 50-day SMA
     
-    # Display key metrics
-    col1, col2, col3, col4, col5 = st.columns(5)
+    Args:
+        data (pd.DataFrame): OHLCV data
     
-    with col1:
-        st.metric(
-            "Current Price",
-            f"${current_price:.2f}",
-            f"{price_change:+.2f} ({price_change_pct:+.2f}%)"
-        )
+    Returns:
+        str: 'Uptrend' or 'Downtrend'
+    """
+    if data.empty or len(data) < 50:
+        return 'Insufficient Data'
     
-    with col2:
-        high_52w = data['High'].max()
-        st.metric("Period High", f"${high_52w:.2f}")
+    sma_50 = calculate_sma(data, 50)
+    last_close = data['Close'].iloc[-1]
+    last_sma = sma_50.iloc[-1]
     
-    with col3:
-        low_52w = data['Low'].min()
-        st.metric("Period Low", f"${low_52w:.2f}")
+    if pd.isna(last_sma):
+        return 'Insufficient Data'
     
-    with col4:
-        avg_volume = data['Volume'].mean()
-        st.metric("Avg Volume", f"{avg_volume:,.0f}")
+    return 'Uptrend' if last_close > last_sma else 'Downtrend'
+
+def find_support_resistance(data, window=20, min_strength=2):
+    """
+    Find support and resistance levels using local extrema
     
-    with col5:
-        volatility = data['Close'].pct_change().std() * np.sqrt(252) * 100
-        st.metric("Volatility (Annual)", f"{volatility:.2f}%")
+    Args:
+        data (pd.DataFrame): OHLCV data
+        window (int): Window for finding local extrema
+        min_strength (int): Minimum strength for significant levels
     
-    # Main chart
-    st.subheader("📈 Price Chart")
+    Returns:
+        dict: Dictionary with 'support' and 'resistance' levels
+    """
+    if data.empty or len(data) < window * 2:
+        return {'support': [], 'resistance': []}
     
-    # Create subplots
-    rows = 1
-    if show_rsi:
-        rows += 1
-    if show_macd:
-        rows += 1
-    if show_volume:
-        rows += 1
+    highs = data['High'].values
+    lows = data['Low'].values
     
-    subplot_titles = ["Price"]
-    if show_volume:
-        subplot_titles.append("Volume")
-    if show_rsi:
-        subplot_titles.append("RSI")
-    if show_macd:
-        subplot_titles.append("MACD")
+    # Find local maxima (resistance) and minima (support)
+    resistance_levels = []
+    support_levels = []
     
-    fig = make_subplots(
-        rows=rows, 
-        cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.05,
-        subplot_titles=subplot_titles,
-        row_heights=[0.6] + [0.4/(rows-1)]*(rows-1) if rows > 1 else [1]
-    )
-    
-    # Price chart
-    if chart_type == "Candlestick":
-        fig.add_trace(
-            go.Candlestick(
-                x=data.index,
-                open=data['Open'],
-                high=data['High'],
-                low=data['Low'],
-                close=data['Close'],
-                name="Gold Futures",
-                increasing_line_color='green',
-                decreasing_line_color='red'
-            ),
-            row=1, col=1
-        )
-    elif chart_type == "Line":
-        fig.add_trace(
-            go.Scatter(
-                x=data.index,
-                y=data['Close'],
-                mode='lines',
-                name="Close Price",
-                line=dict(color='blue', width=2)
-            ),
-            row=1, col=1
-        )
-    elif chart_type == "Area":
-        fig.add_trace(
-            go.Scatter(
-                x=data.index,
-                y=data['Close'],
-                fill='tonexty',
-                mode='lines',
-                name="Close Price",
-                line=dict(color='blue'),
-                fillcolor='rgba(0,100,80,0.2)'
-            ),
-            row=1, col=1
-        )
-    
-    # Add technical indicators
-    if show_sma and f'SMA_{sma_period}' in data.columns:
-        fig.add_trace(
-            go.Scatter(
-                x=data.index,
-                y=data[f'SMA_{sma_period}'],
-                mode='lines',
-                name=f'SMA ({sma_period})',
-                line=dict(color='orange', width=1)
-            ),
-            row=1, col=1
-        )
-    
-    if show_ema and f'EMA_{ema_period}' in data.columns:
-        fig.add_trace(
-            go.Scatter(
-                x=data.index,
-                y=data[f'EMA_{ema_period}'],
-                mode='lines',
-                name=f'EMA ({ema_period})',
-                line=dict(color='purple', width=1)
-            ),
-            row=1, col=1
-        )
-    
-    if show_bollinger and 'BB_High' in data.columns:
-        fig.add_trace(
-            go.Scatter(
-                x=data.index,
-                y=data['BB_High'],
-                mode='lines',
-                name='BB Upper',
-                line=dict(color='gray', width=1, dash='dash'),
-                showlegend=False
-            ),
-            row=1, col=1
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=data.index,
-                y=data['BB_Low'],
-                mode='lines',
-                name='Bollinger Bands',
-                line=dict(color='gray', width=1, dash='dash'),
-                fill='tonexty',
-                fillcolor='rgba(128,128,128,0.1)'
-            ),
-            row=1, col=1
-        )
-    
-    current_row = 1
-    
-    # Volume
-    if show_volume:
-        current_row += 1
-        colors = ['red' if close < open else 'green' for close, open in zip(data['Close'], data['Open'])]
-        fig.add_trace(
-            go.Bar(
-                x=data.index,
-                y=data['Volume'],
-                name="Volume",
-                marker_color=colors,
-                opacity=0.7
-            ),
-            row=current_row, col=1
-        )
-    
-    # RSI
-    if show_rsi and f'RSI_{rsi_period}' in data.columns:
-        current_row += 1
-        fig.add_trace(
-            go.Scatter(
-                x=data.index,
-                y=data[f'RSI_{rsi_period}'],
-                mode='lines',
-                name=f'RSI ({rsi_period})',
-                line=dict(color='purple', width=2)
-            ),
-            row=current_row, col=1
-        )
+    for i in range(window, len(data) - window):
+        # Check for local maximum (resistance)
+        if highs[i] == max(highs[i-window:i+window+1]):
+            resistance_levels.append(highs[i])
         
-        # Add RSI levels
-        fig.add_hline(y=70, line_dash="dash", line_color="red", row=current_row, col=1, opacity=0.5)
-        fig.add_hline(y=30, line_dash="dash", line_color="green", row=current_row, col=1, opacity=0.5)
-        fig.add_hline(y=50, line_dash="dash", line_color="gray", row=current_row, col=1, opacity=0.3)
+        # Check for local minimum (support)
+        if lows[i] == min(lows[i-window:i+window+1]):
+            support_levels.append(lows[i])
     
-    # MACD
-    if show_macd and 'MACD' in data.columns:
-        current_row += 1
-        fig.add_trace(
-            go.Scatter(
-                x=data.index,
-                y=data['MACD'],
-                mode='lines',
-                name='MACD',
-                line=dict(color='blue', width=2)
-            ),
-            row=current_row, col=1
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=data.index,
-                y=data['MACD_Signal'],
-                mode='lines',
-                name='Signal',
-                line=dict(color='red', width=1)
-            ),
-            row=current_row, col=1
-        )
+    # Get the last 2 most significant levels
+    resistance_levels = sorted(set(resistance_levels), reverse=True)[:2]
+    support_levels = sorted(set(support_levels))[-2:]
+    
+    return {
+        'support': support_levels,
+        'resistance': resistance_levels
+    }
+
+def save_snapshot(ticker_name, ticker_symbol):
+    """
+    Save weekly snapshot of data and analysis
+    
+    Args:
+        ticker_name (str): Display name of ticker
+        ticker_symbol (str): Yahoo Finance symbol
+    """
+    # Fetch fresh data
+    data = fetch_futures_data(ticker_symbol)
+    
+    if data.empty:
+        return False
+    
+    # Save raw OHLCV data
+    ohlcv_file = os.path.join(SNAPSHOTS_DIR, f'{ticker_name}_ohlcv.csv')
+    data.to_csv(ohlcv_file)
+    
+    # Calculate analysis
+    trend = determine_trend(data)
+    sr_levels = find_support_resistance(data)
+    sma_50 = calculate_sma(data, 50)
+    
+    # Create analysis summary
+    analysis = {
+        'ticker': ticker_name,
+        'symbol': ticker_symbol,
+        'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'trend': trend,
+        'last_close': data['Close'].iloc[-1] if not data.empty else 0,
+        'sma_50': sma_50.iloc[-1] if not sma_50.empty else 0,
+        'support_levels': sr_levels['support'],
+        'resistance_levels': sr_levels['resistance'],
+        'total_records': len(data)
+    }
+    
+    # Save analysis
+    analysis_file = os.path.join(SNAPSHOTS_DIR, f'{ticker_name}_analysis.csv')
+    analysis_df = pd.DataFrame([analysis])
+    analysis_df.to_csv(analysis_file, index=False)
+    
+    return True
+
+def load_snapshot(ticker_name):
+    """
+    Load existing snapshot data
+    
+    Args:
+        ticker_name (str): Display name of ticker
+    
+    Returns:
+        tuple: (ohlcv_data, analysis_data)
+    """
+    ohlcv_file = os.path.join(SNAPSHOTS_DIR, f'{ticker_name}_ohlcv.csv')
+    analysis_file = os.path.join(SNAPSHOTS_DIR, f'{ticker_name}_analysis.csv')
+    
+    ohlcv_data = pd.DataFrame()
+    analysis_data = {}
+    
+    try:
+        if os.path.exists(ohlcv_file):
+            ohlcv_data = pd.read_csv(ohlcv_file, index_col=0, parse_dates=True)
         
-        # MACD Histogram
-        colors = ['green' if val >= 0 else 'red' for val in data['MACD_Histogram']]
-        fig.add_trace(
-            go.Bar(
-                x=data.index,
-                y=data['MACD_Histogram'],
-                name='Histogram',
-                marker_color=colors,
-                opacity=0.6
-            ),
-            row=current_row, col=1
+        if os.path.exists(analysis_file):
+            analysis_df = pd.read_csv(analysis_file)
+            if not analysis_df.empty:
+                analysis_data = analysis_df.iloc[0].to_dict()
+                # Convert string representations back to lists
+                if 'support_levels' in analysis_data:
+                    try:
+                        analysis_data['support_levels'] = eval(analysis_data['support_levels'])
+                    except:
+                        analysis_data['support_levels'] = []
+                if 'resistance_levels' in analysis_data:
+                    try:
+                        analysis_data['resistance_levels'] = eval(analysis_data['resistance_levels'])
+                    except:
+                        analysis_data['resistance_levels'] = []
+    
+    except Exception as e:
+        st.error(f"Error loading snapshot for {ticker_name}: {str(e)}")
+    
+    return ohlcv_data, analysis_data
+
+def create_candlestick_chart(data, ticker_name, analysis_data):
+    """
+    Create interactive candlestick chart with Plotly
+    
+    Args:
+        data (pd.DataFrame): OHLCV data
+        ticker_name (str): Display name
+        analysis_data (dict): Analysis results
+    
+    Returns:
+        plotly.graph_objects.Figure: Interactive chart
+    """
+    if data.empty:
+        return go.Figure().add_annotation(
+            text="No data available", 
+            xref="paper", yref="paper",
+            x=0.5, y=0.5, 
+            showarrow=False,
+            font=dict(size=20)
         )
+    
+    # Create candlestick chart
+    fig = go.Figure()
+    
+    # Add candlestick
+    fig.add_trace(go.Candlestick(
+        x=data.index,
+        open=data['Open'],
+        high=data['High'],
+        low=data['Low'],
+        close=data['Close'],
+        name=ticker_name,
+        increasing_line_color='green',
+        decreasing_line_color='red'
+    ))
+    
+    # Add SMA 50
+    sma_50 = calculate_sma(data, 50)
+    if not sma_50.empty:
+        fig.add_trace(go.Scatter(
+            x=data.index,
+            y=sma_50,
+            mode='lines',
+            name='SMA 50',
+            line=dict(color='blue', width=2)
+        ))
+    
+    # Add support and resistance lines
+    if analysis_data:
+        support_levels = analysis_data.get('support_levels', [])
+        resistance_levels = analysis_data.get('resistance_levels', [])
+        
+        for level in support_levels:
+            fig.add_hline(
+                y=level, 
+                line_dash="dash", 
+                line_color="green",
+                annotation_text=f"Support: {level:.2f}",
+                annotation_position="bottom right"
+            )
+        
+        for level in resistance_levels:
+            fig.add_hline(
+                y=level, 
+                line_dash="dash", 
+                line_color="red",
+                annotation_text=f"Resistance: {level:.2f}",
+                annotation_position="top right"
+            )
     
     # Update layout
     fig.update_layout(
-        title=f"Gold Futures (GCZ25.CMX) - {selected_period}",
+        title=f'{ticker_name} - Candlestick Chart',
+        xaxis_title='Date',
+        yaxis_title='Price',
         xaxis_rangeslider_visible=False,
-        height=600 if rows == 1 else 800,
+        height=600,
         showlegend=True,
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1
-        )
+        hovermode='x unified'
     )
     
-    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
-    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
+    return fig
+
+def display_ticker_analysis(ticker_name, ticker_symbol):
+    """
+    Display complete analysis for a single ticker
     
-    st.plotly_chart(fig, use_container_width=True)
+    Args:
+        ticker_name (str): Display name
+        ticker_symbol (str): Yahoo Finance symbol
+    """
+    # Load existing snapshot
+    ohlcv_data, analysis_data = load_snapshot(ticker_name)
     
-    # Statistics and analysis
-    col1, col2 = st.columns(2)
+    # Create columns for metrics and update button
+    col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
     
     with col1:
-        st.subheader("📊 Statistical Summary")
-        stats_data = {
-            "Metric": ["Mean", "Median", "Std Dev", "Min", "Max", "Skewness", "Kurtosis"],
-            "Value": [
-                f"${data['Close'].mean():.2f}",
-                f"${data['Close'].median():.2f}",
-                f"${data['Close'].std():.2f}",
-                f"${data['Close'].min():.2f}",
-                f"${data['Close'].max():.2f}",
-                f"{data['Close'].skew():.3f}",
-                f"{data['Close'].kurtosis():.3f}"
-            ]
-        }
-        st.dataframe(pd.DataFrame(stats_data), hide_index=True)
+        if analysis_data:
+            trend_color = "green" if analysis_data.get('trend') == 'Uptrend' else "red"
+            st.metric(
+                "Trend", 
+                analysis_data.get('trend', 'Unknown'),
+                delta=None
+            )
+            st.markdown(f"<span style='color: {trend_color}'>●</span>", unsafe_allow_html=True)
     
     with col2:
-        st.subheader("🎯 Recent Performance")
-        returns = data['Close'].pct_change().dropna()
+        if analysis_data:
+            st.metric(
+                "Last Close", 
+                f"${analysis_data.get('last_close', 0):.2f}",
+                delta=None
+            )
+    
+    with col3:
+        if analysis_data:
+            st.metric(
+                "SMA 50", 
+                f"${analysis_data.get('sma_50', 0):.2f}",
+                delta=None
+            )
+    
+    with col4:
+        if st.button(f"Update {ticker_name}", key=f"update_{ticker_name}"):
+            with st.spinner(f"Updating {ticker_name} data..."):
+                if save_snapshot(ticker_name, ticker_symbol):
+                    st.success(f"{ticker_name} updated!")
+                    st.experimental_rerun()
+                else:
+                    st.error(f"Failed to update {ticker_name}")
+    
+    # Display last update time
+    if analysis_data and 'last_update' in analysis_data:
+        st.caption(f"Last updated: {analysis_data['last_update']}")
+    
+    # Create and display chart
+    if not ohlcv_data.empty:
+        chart = create_candlestick_chart(ohlcv_data, ticker_name, analysis_data)
+        st.plotly_chart(chart, use_container_width=True)
         
-        performance_data = {
-            "Period": ["1 Day", "5 Days", "30 Days", "Overall"],
-            "Return": [
-                f"{returns.iloc[-1]*100:+.2f}%" if len(returns) > 0 else "N/A",
-                f"{(data['Close'].iloc[-1]/data['Close'].iloc[-5]-1)*100:+.2f}%" if len(data) > 5 else "N/A",
-                f"{(data['Close'].iloc[-1]/data['Close'].iloc[-30]-1)*100:+.2f}%" if len(data) > 30 else "N/A",
-                f"{(data['Close'].iloc[-1]/data['Close'].iloc[0]-1)*100:+.2f}%" if len(data) > 1 else "N/A"
-            ]
-        }
-        st.dataframe(pd.DataFrame(performance_data), hide_index=True)
-    
-    # Recent data table
-    st.subheader("📋 Recent Data")
-    recent_data = data[['Open', 'High', 'Low', 'Close', 'Volume']].tail(10)
-    recent_data = recent_data.round(2)
-    st.dataframe(recent_data)
-    
-    # Market insights
-    st.subheader("💡 Market Insights")
-    
-    # Calculate some basic signals
-    insights = []
-    
-    if show_rsi and f'RSI_{rsi_period}' in data.columns:
-        current_rsi = data[f'RSI_{rsi_period}'].iloc[-1]
-        if current_rsi > 70:
-            insights.append("🔴 RSI indicates overbought conditions")
-        elif current_rsi < 30:
-            insights.append("🟢 RSI indicates oversold conditions")
-        else:
-            insights.append(f"🟡 RSI is neutral at {current_rsi:.2f}")
-    
-    if show_sma and f'SMA_{sma_period}' in data.columns:
-        current_sma = data[f'SMA_{sma_period}'].iloc[-1]
-        if current_price > current_sma:
-            insights.append(f"🟢 Price is above SMA({sma_period})")
-        else:
-            insights.append(f"🔴 Price is below SMA({sma_period})")
-    
-    # Volume analysis
-    avg_volume_recent = data['Volume'].tail(5).mean()
-    if data['Volume'].iloc[-1] > avg_volume_recent * 1.5:
-        insights.append("📈 High volume detected - increased market interest")
-    elif data['Volume'].iloc[-1] < avg_volume_recent * 0.5:
-        insights.append("📉 Low volume - reduced market activity")
-    
-    if insights:
-        for insight in insights:
-            st.write(insight)
+        # Display support and resistance levels
+        if analysis_data:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.subheader("Support Levels")
+                support_levels = analysis_data.get('support_levels', [])
+                if support_levels:
+                    for i, level in enumerate(support_levels, 1):
+                        st.write(f"S{i}: ${level:.2f}")
+                else:
+                    st.write("No support levels identified")
+            
+            with col2:
+                st.subheader("Resistance Levels")
+                resistance_levels = analysis_data.get('resistance_levels', [])
+                if resistance_levels:
+                    for i, level in enumerate(resistance_levels, 1):
+                        st.write(f"R{i}: ${level:.2f}")
+                else:
+                    st.write("No resistance levels identified")
     else:
-        st.write("No specific signals detected at this time.")
+        st.warning(f"No data available for {ticker_name}. Click 'Update {ticker_name}' to fetch data.")
+
+def main():
+    """Main Streamlit application"""
+    
+    # Ensure snapshots directory exists
+    ensure_snapshots_directory()
+    
+    # App header
+    st.title("📈 Futures Trading Dashboard")
+    st.markdown("---")
+    
+    # Sidebar
+    st.sidebar.title("Dashboard Controls")
+    
+    # Check for existing snapshots
+    snapshots_exist = all(
+        os.path.exists(os.path.join(SNAPSHOTS_DIR, f'{ticker}_ohlcv.csv'))
+        for ticker in TICKERS.keys()
+    )
+    
+    if not snapshots_exist:
+        st.sidebar.warning("⚠️ Initial setup required")
+        if st.sidebar.button("🚀 Initialize All Data", key="init_all"):
+            progress_bar = st.sidebar.progress(0)
+            for i, (ticker_name, ticker_symbol) in enumerate(TICKERS.items()):
+                st.sidebar.write(f"Fetching {ticker_name}...")
+                save_snapshot(ticker_name, ticker_symbol)
+                progress_bar.progress((i + 1) / len(TICKERS))
+            st.sidebar.success("✅ All data initialized!")
+            st.experimental_rerun()
+    else:
+        # Weekly update option
+        st.sidebar.info("💡 Weekly Update")
+        if st.sidebar.button("🔄 Update All Snapshots", key="update_all"):
+            progress_bar = st.sidebar.progress(0)
+            for i, (ticker_name, ticker_symbol) in enumerate(TICKERS.items()):
+                st.sidebar.write(f"Updating {ticker_name}...")
+                save_snapshot(ticker_name, ticker_symbol)
+                progress_bar.progress((i + 1) / len(TICKERS))
+            st.sidebar.success("✅ All snapshots updated!")
+            st.experimental_rerun()
+    
+    # Display ticker selection
+    selected_ticker = st.sidebar.selectbox(
+        "Select Ticker to View",
+        options=list(TICKERS.keys()),
+        index=0
+    )
+    
+    # Display analysis for selected ticker
+    if selected_ticker:
+        ticker_symbol = TICKERS[selected_ticker]
+        display_ticker_analysis(selected_ticker, ticker_symbol)
     
     # Footer
     st.markdown("---")
-    st.markdown("*Data provided by Yahoo Finance. This dashboard is for educational purposes only and should not be used as investment advice.*")
+    st.markdown("**Note:** This dashboard fetches data from Yahoo Finance and is for educational purposes only.")
 
-else:
-    st.error("Unable to fetch data for GCZ25.CMX. Please check if the symbol is correct and try again.")
-    st.info("Note: GCZ25.CMX represents December 2025 Gold Futures. Make sure the contract is still active and trading.")
-
-# Refresh button
-if st.button("🔄 Refresh Data"):
-    st.cache_data.clear()
-    st.rerun()
+if __name__ == "__main__":
+    main()
